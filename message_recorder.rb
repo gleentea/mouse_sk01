@@ -3,6 +3,7 @@ require 'mqtt'
 require 'json'
 require 'pp'
 require 'sqlite3'
+require 'openssl'
 
 db = SQLite3::Database.new('types.db')
 client = MQTT::Client.connect('h60mqtt.cloudapp.net',1883)
@@ -18,6 +19,25 @@ if File.exists? 'types.db.marshal'
 end
 
 client.get do |topic, message|
+  begin
+    json = JSON.parse(message)
+    if json.key? 'data'
+      data = JSON.parse(json['data'])
+      %w|signal property|.each do |key|
+        if data.key? key
+          inner_json = JSON.parse(data[key])
+          data[key] = inner_json.to_json
+        end
+      end
+      json['data'] = data.to_json
+    end
+    message = json.to_json
+  rescue
+  end
+  hash = OpenSSL::Digest::SHA1.hexdigest(message)
+  res = db.get_first_value('select count(*) from mqtt_raw where hash = ?', hash)
+  db.execute("insert into mqtt_raw(hash, topic,message) values (?, ?,?)", [hash, topic, message])   unless res[0] > 0
+  next
   next if message[0] != '{'
   json = JSON.parse(message)
   type = json['type']
